@@ -1,2 +1,10 @@
-__pycache__
+*.pyc
+__pycache__/
+dist/
+build/
+*.egg-info/
 .env
+
+
+output.json
+scraper.py

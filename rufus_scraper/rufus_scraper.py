@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 from openai import OpenAI
 from utils import parse_list
@@ -10,17 +11,15 @@ from concurrent.futures import ThreadPoolExecutor
 
 
 class RufusScraper:
-    def __init__(self, base_url, retries=3, max_depth=2, async_mode=True, max_workers=5, api_key=None):
+    def __init__(self, retries=3, max_depth=2, async_mode=True, max_workers=5, api_key=None):
         """
         Initializes the Rufus WebsiteScraper instance.
-        :param base_url: The base URL to start scraping from.
         :param retries: Number of retries for failed requests.
         :param max_depth: Maximum depth of web tree to crawl recursively.
         :param async_mode: Whether to use asynchronous mode for fetching content.
         :param max_workers: Maximum number of workers for concurrent fetching.
         :param api_key: OpenAI API key. If not provided, make sure to set as environment variable 'OPENAI_API_KEY'.
         """
-        self.base_url = base_url
         self.retries = retries
         self.max_depth = max_depth
         self.async_mode = async_mode
@@ -40,25 +39,24 @@ class RufusScraper:
             try:
                 response = requests.get(url, headers=self.headers)
                 response.raise_for_status()
-                # soup = BeautifulSoup(response.text, 'html.parser')
-
                 markdown_content = md(response.text)
                 return markdown_content
             except Exception as e:
                 print(f"Error fetching content from {url}: {e}")
         return None
 
-    def crawl_all_links(self, url, depth=1):
+    def fetch_relevant_links(self, url, depth=1):
         """
-        Crawl all links(only URLs) from a website recursively up to max_depth.
-        :param url: The URL to start crawling from.
-        :param depth: The current depth of the crawl.
+        Fetches and filters relevant links from a website during the crawling phase.
+        :param url: The base URL to crawl.
+        :param depth: Current depth of crawling (used for recursive depth control).
+        :return: A list of relevant links.
         """
         if depth > self.max_depth or url in self.visited:
             return []
 
         self.visited.add(url)
-        print(f"Fetching links from: {url} (Depth: {depth})")
+        print(f"Crawling: {url} (Depth: {depth})")
         try:
             response = requests.get(url, headers=self.headers)
             response.raise_for_status()
@@ -71,14 +69,17 @@ class RufusScraper:
                 if full_url not in self.visited:
                     links.append(full_url)
 
-            for link in links:
-                links += self.crawl_all_links(link, depth + 1)
+            filtered_links = self.get_relevant_urls(self.prompt, links)
+            filtered_links = parse_list(filtered_links)
 
-            return links
+            for link in filtered_links:
+                filtered_links += self.fetch_relevant_links(link, depth + 1)
+
+            return filtered_links
         except Exception as e:
             print(f"Error fetching links from {url}: {e}")
             return []
-
+            
     def get_relevant_urls(self, prompt, links):
         """
         Filters relevant URLs using OpenAI.
@@ -100,7 +101,7 @@ class RufusScraper:
         Fetch content from multiple URLs in parallel and return results in the desired JSON format.
         """
         def fetch_content(url):
-            return {'url': url, 'markdown_content': self.fetch_website_content(url)}
+            return {'url': url, 'markdown': self.fetch_website_content(url)}
 
         results = []
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -129,25 +130,33 @@ class RufusScraper:
     #         print(f"Error analyzing content with OpenAI: {e}")
     #         return None
 
-    def scrape(self, prompt):
+    def scrape(self, base_url, prompt, output_file='output.json'):
         """
         Orchestrates the scraping process:
         1. Fetches all links.
         2. Filters relevant links using OpenAI.
         3. Scrapes content from relevant links.
+
+        :param base_url: The base URL to start scraping from.
+        :param prompt: The prompt to guide the scraping process.
+        :param output_file: The file to save the scraped results. [Optional](Default: output.json)
         """
-        # Step 1: Fetch all links recursively
-        all_links = self.crawl_all_links(self.base_url)
+        self.base_url = base_url
+        self.prompt = prompt
 
-        # Step 2: Filter relevant URLs
-        relevant_links = self.get_relevant_urls(prompt, all_links)
-        relevant_links = parse_list(relevant_links)
-
-        # Step 3: Fetch content from relevant URLs
+        relevant_links = self.fetch_relevant_links(self.base_url)
         if self.async_mode:
             relevant_content = self.parallel_fetch_content(relevant_links)
         else:
-            relevant_content = [{'url': url, 'markdown_content': self.fetch_website_content(url)} for url in relevant_links]
+            relevant_content = [
+                {'url': url, 'markdown': self.fetch_website_content(url)} for url in relevant_links
+            ]
+
+        with open(output_file, "w") as f:
+            json.dump(relevant_content, f, indent=2)
+            print(f"Scraped results saved to {output_file}")
+
+        return relevant_content
 
         # # Step 4: Analyze content with OpenAI
         # analyzed_results = {}
@@ -158,15 +167,9 @@ class RufusScraper:
 
 
 if __name__ == "__main__":
-    base_url = "https://www.github.com/"
-    prompt = "Student Benefits of Github"
 
-    scraper = RufusScraper(base_url, retries=3, max_depth=2, async_mode=True, max_workers=5)
-    results = scraper.scrape(prompt)
+    base_url = "https://www.sjsu.edu/"
+    prompt = "Admission procedure for international students"
 
-    with open("results.json", "w") as f:
-        json.dump(results, f, indent=2)
-    print("Results saved to results.json")
-
-    # for url, analysis in results.items():
-    #     print(f"Analysis for {url}:\n{analysis}\n")
+    rufus = RufusScraper(retries=3, max_depth=1, async_mode=True, max_workers=5)
+    output = rufus.scrape(base_url, prompt)
