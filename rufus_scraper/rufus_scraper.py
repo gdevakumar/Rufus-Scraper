@@ -1,13 +1,21 @@
 import os
+import ast
 import json
 import requests
+from typing import List
 from openai import OpenAI
-from utils import parse_list
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
 from markdownify import markdownify as md
 from concurrent.futures import ThreadPoolExecutor
 
+
+
+def parse_list(llm_output: str) -> List[str] | None:
+    try:
+        return ast.literal_eval(llm_output)
+    except (ValueError, SyntaxError):
+        return None
 
 
 class RufusScraper:
